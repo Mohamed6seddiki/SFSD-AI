@@ -1,13 +1,16 @@
-Flask==3.0.0
-flask-cors==4.0.0
-python-dotenv==1.0.0
-requests==2.31.0
+Flask==3.1.0
+flask-cors==5.0.0
+python-dotenv==1.0.1
+requests==2.32.3
 
 pypdf==5.1.0
-numpy==1.26.4
+numpy==2.2.1
 
-faiss-cpu==1.11.0.post1
-torch==2.1.2
-sentence-transformers==2.6.1
+faiss-cpu==1.9.0.post1
+torch==2.5.1
+sentence-transformers==3.3.1
 
-gunicorn
+gunicorn==23.0.0
+
+# Alternative: If you still face issues, use these minimal versions:
+# torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
