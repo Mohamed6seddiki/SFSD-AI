@@ -9,5 +9,6 @@ numpy==1.26.4
 faiss-cpu==1.8.0.post1
 torch==2.1.2
 sentence-transformers==2.6.1
+faiss-cpu==1.11.0.post1
 
 gunicorn
