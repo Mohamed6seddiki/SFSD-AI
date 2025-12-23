@@ -1,10 +1,19 @@
+# Core
 Flask==3.1.0
-   flask-cors==5.0.0
-   python-dotenv==1.0.1
-   requests==2.32.3
-   pypdf==5.1.0
-   numpy==1.26.4
-   faiss-cpu==1.8.0.post1
-   torch==2.3.1
-   sentence-transformers==3.0.1
-   gunicorn==23.0.0
+flask-cors==5.0.0
+python-dotenv==1.0.1
+requests==2.32.3
+
+# PDF
+pypdf==5.1.0
+numpy==1.26.4
+
+# Vector Search
+faiss-cpu==1.8.0.post1
+
+# Lightweight Embeddings (no torch needed)
+scikit-learn==1.5.2
+joblib==1.4.2
+
+# Server
+gunicorn==23.0.0
