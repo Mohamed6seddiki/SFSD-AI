@@ -57,7 +57,8 @@ AUTO_REINDEX = os.getenv("AUTO_REINDEX", "true").lower() in ("1", "true", "yes",
 # FLASK
 # ==========================================================
 app = Flask(__name__)
-CORS(app)
+# Allow all origins for CORS (adjust in production if needed)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 chat_history: List[Dict[str, Any]] = []
 _index_lock = threading.Lock()
@@ -115,15 +116,22 @@ def chunk_text(text: str) -> List[str]:
 
 def load_pdfs_from_dir(pdf_dir: str) -> List[Chunk]:
     chunks: List[Chunk] = []
+    if not os.path.exists(pdf_dir):
+        logging.warning(f"PDF directory not found: {pdf_dir}")
+        return chunks
+    
     pdfs = [f for f in os.listdir(pdf_dir) if f.lower().endswith(".pdf")]
     logging.info(f"📚 Found {len(pdfs)} PDFs in {pdf_dir}")
 
     for fname in pdfs:
-        reader = PdfReader(os.path.join(pdf_dir, fname))
-        for i, page in enumerate(reader.pages, start=1):
-            text = normalize_text(page.extract_text() or "")
-            for c in chunk_text(text):
-                chunks.append(Chunk(c, fname, i))
+        try:
+            reader = PdfReader(os.path.join(pdf_dir, fname))
+            for i, page in enumerate(reader.pages, start=1):
+                text = normalize_text(page.extract_text() or "")
+                for c in chunk_text(text):
+                    chunks.append(Chunk(c, fname, i))
+        except Exception as e:
+            logging.error(f"Error reading {fname}: {e}")
 
     logging.info(f"✅ Loaded {len(chunks)} chunks")
     return chunks
@@ -155,6 +163,7 @@ def build_index():
         dim = embed(["test"]).shape[1]
         _index = faiss.IndexFlatIP(dim)
         _meta = []
+        logging.warning("No PDFs found, created empty index")
         return
 
     vecs = embed([f"passage: {c.text}" for c in chunks])
@@ -165,6 +174,7 @@ def build_index():
     faiss.write_index(_index, INDEX_PATH)
     with open(META_PATH, "w", encoding="utf-8") as f:
         json.dump(_meta, f, ensure_ascii=False)
+    logging.info("✅ Index built successfully")
 
 def ensure_index():
     global _index, _meta
@@ -174,6 +184,7 @@ def ensure_index():
         _index = faiss.read_index(INDEX_PATH)
         with open(META_PATH, "r", encoding="utf-8") as f:
             _meta = json.load(f)
+        logging.info(f"✅ Loaded existing index with {len(_meta)} chunks")
     else:
         build_index()
 
@@ -199,23 +210,28 @@ def retrieve(question: str) -> Tuple[List[Dict], float]:
 # LLM CALL (GROQ)
 # ==========================================================
 def groq(system, user):
-    r = requests.post(
-        f"{GROQ_BASE_URL}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": GROQ_MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user}
-            ],
-            "temperature": 0.2
-        },
-        timeout=60
-    )
-    return r.json()["choices"][0]["message"]["content"]
+    try:
+        r = requests.post(
+            f"{GROQ_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": GROQ_MODEL,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user}
+                ],
+                "temperature": 0.2
+            },
+            timeout=60
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        logging.error(f"Groq API error: {e}")
+        raise
 
 # ==========================================================
 # PROMPTS
@@ -251,55 +267,79 @@ Same rules as above.
 # ==========================================================
 # ROUTES
 # ==========================================================
+@app.route("/")
+def home():
+    return jsonify({
+        "status": "ok",
+        "message": "SFSD AI Backend is running",
+        "endpoints": ["/health", "/ask", "/reindex"]
+    })
+
 @app.route("/health")
 def health():
-    ensure_index()
-    return jsonify({
-        "status": "healthy",
-        "chunks_indexed": len(_meta),
-        "errors": []
-    })
+    try:
+        ensure_index()
+        return jsonify({
+            "status": "healthy",
+            "chunks_indexed": len(_meta),
+            "groq_configured": bool(GROQ_API_KEY),
+            "data_dir": DATA_DIR,
+            "errors": []
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e)
+        }), 500
 
 @app.route("/reindex", methods=["POST"])
 def reindex():
-    with _index_lock:
-        build_index()
-    return jsonify({"ok": True, "chunks_indexed": len(_meta)})
+    try:
+        with _index_lock:
+            build_index()
+        return jsonify({"ok": True, "chunks_indexed": len(_meta)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/ask", methods=["POST"])
 def ask():
-    data = request.get_json() or {}
-    question = data.get("question", "").strip()
-    if not question:
-        return jsonify({"error": "question required"}), 400
+    try:
+        data = request.get_json() or {}
+        question = data.get("question", "").strip()
+        if not question:
+            return jsonify({"error": "question required"}), 400
 
-    lang = detect_lang(question)
-    bilingual = wants_bilingual(question)
-    exercise = is_exercise(question)
+        lang = detect_lang(question)
+        bilingual = wants_bilingual(question)
+        exercise = is_exercise(question)
 
-    sources, best = retrieve(question)
-    grounded = best >= SIM_THRESHOLD and len(sources) > 0
+        sources, best = retrieve(question)
+        grounded = best >= SIM_THRESHOLD and len(sources) > 0
 
-    meta = f"LANG={lang}\nBILINGUAL={bilingual}\nEXERCISE_MODE={'yes' if exercise else 'no'}\n"
+        meta = f"LANG={lang}\nBILINGUAL={bilingual}\nEXERCISE_MODE={'yes' if exercise else 'no'}\n"
 
-    if grounded:
-        ctx = "\n".join([f"{s['file']} p.{s['page']}: {s['snippet']}" for s in sources])
-        answer = groq(SYSTEM_GROUNDED, meta + question + "\n\n" + ctx)
-    else:
-        answer = groq(SYSTEM_GENERAL, meta + question)
+        if grounded:
+            ctx = "\n".join([f"{s['file']} p.{s['page']}: {s['snippet']}" for s in sources])
+            answer = groq(SYSTEM_GROUNDED, meta + question + "\n\n" + ctx)
+        else:
+            answer = groq(SYSTEM_GENERAL, meta + question)
 
-    chat_history.append({"q": question, "a": answer})
+        chat_history.append({"q": question, "a": answer})
 
-    return jsonify({
-        "answer": answer,
-        "grounded": grounded,
-        "sources": sources,
-        "history_count": len(chat_history)
-    })
+        return jsonify({
+            "answer": answer,
+            "grounded": grounded,
+            "sources": sources,
+            "history_count": len(chat_history)
+        })
+    except Exception as e:
+        logging.error(f"Error in /ask: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # ==========================================================
 # MAIN
 # ==========================================================
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
     ensure_index()
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)
