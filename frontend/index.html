@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Structures & File Systems Assistant</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Header Section -->
+        <header class="header">
+            <div class="header-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                    <polyline points="7.5 4.21 12 6.81 16.5 4.21"/>
+                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                    <line x1="12" y1="22.08" x2="12" y2="12"/>
+                </svg>
+            </div>
+            <h1 class="header-title">SFSD AI</h1>
+            <p class="header-subtitle">Smart Assistant for Data Structures & File Systems</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Question Section -->
+            <div class="question-section">
+                <label for="questionInput" class="input-label">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    Ask Your Question
+                </label>
+                <textarea 
+                    id="questionInput" 
+                    class="question-input" 
+                    placeholder="Ask a question about data structures or file systems..."
+                    rows="5"
+                ></textarea>
+                <button id="askButton" class="ask-button">
+                    <span class="button-text">ask</span>
+                    <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                        <polyline points="12 5 19 12 12 19"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Answer Section -->
+            <div class="answer-section">
+                <!-- Loading Indicator -->
+                <div class="loading" id="loadingIndicator">
+                    <div class="spinner"></div>
+                    <p class="loading-text">Processing your question...</p>
+                </div>
+
+                <!-- Answer Display -->
+                <div class="answer-container" id="answerContainer">
+                    <div class="answer-header">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10 9 9 9 8 9"/>
+                        </svg>
+                        <h2>Answer</h2>
+                    </div>
+                    <div class="answer-content" id="answerContent">
+                        <div class="welcome-message">
+                            <p>👋 Welcome! Ask any question about:</p>
+                            <ul>
+                                <li>📊 Data Structures (Arrays, Linked Lists, Trees, Graphs)</li>
+                                <li>📁 File Systems (Organization, Hierarchies, Operations)</li>
+                                <li>⚡ Algorithms and Complexity Analysis</li>
+                                <li>💾 Memory Management and Storage</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+        <p class="subtitle">
+        SFSD AI Tutor • Built for Computer Science Students • French & English
+        </p>
+
+        <div class="social-links">
+        <a href="https://github.com/Mohamed6seddiki" target="_blank" rel="noopener">
+            GitHub
+        </a>
+        •
+        <a href="https://www.linkedin.com/in/mohamed-seddiki-55b8a6371?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app" target="_blank" rel="noopener">
+            LinkedIn
+        </a>
+        </div>
+
+        </footer>
+    </div>
+
+<script src="script.js"></script>
+</body>
+</html>
