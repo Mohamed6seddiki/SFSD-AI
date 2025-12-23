@@ -1,10 +1,34 @@
-Flask==3.0.0
-flask-cors==4.0.0
-python-dotenv==1.0.0
-requests==2.31.0
+# ===================================
+# Core Flask
+# ===================================
+Flask==3.1.0
+flask-cors==5.0.0
+python-dotenv==1.0.1
+gunicorn==23.0.0
 
+# ===================================
+# API & Requests
+# ===================================
+requests==2.32.3
+
+# ===================================
+# PDF Processing
+# ===================================
 pypdf==5.1.0
-numpy==1.26.4
-faiss-cpu==1.8.0.post1
-sentence-transformers==3.3.1
-torch==2.4.1
+
+# ===================================
+# Groq API
+# ===================================
+groq==0.13.0
+
+# ===================================
+# RAG - LlamaIndex (lightweight)
+# ===================================
+llama-index-core==0.11.0
+llama-index-llms-groq==0.2.0
+
+# ===================================
+# Embeddings (أخف من sentence-transformers)
+# ===================================
+# سيتم تثبيت numpy تلقائياً كـ dependency
+llama-index-embeddings-huggingface==0.3.0
