@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 import logging
 import threading
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from dotenv import load_dotenv
 from pypdf import PdfReader
 
 import faiss
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sentence_transformers import SentenceTransformer
 
 # ==========================================================
 # ENV + LOGGING
@@ -26,6 +27,8 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
+APP_TITLE = "SFSD AI (Hybrid RAG • FR/EN • Pseudocode)"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "..", "data", "lectures"))
@@ -35,12 +38,16 @@ INDEX_DIR = os.getenv("INDEX_DIR", os.path.join(BASE_DIR, "index_store"))
 INDEX_DIR = os.path.abspath(INDEX_DIR)
 os.makedirs(INDEX_DIR, exist_ok=True)
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
-GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-
 TOP_K = int(os.getenv("TOP_K", "5"))
-MAX_FEATURES = int(os.getenv("MAX_FEATURES", "4096"))
+SIM_THRESHOLD = float(os.getenv("SIM_THRESHOLD", "0.75"))
+MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "12000"))
+
+EMBED_MODEL_NAME = os.getenv("EMBED_MODEL", "intfloat/multilingual-e5-small")
+
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "900"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
+
+AUTO_REINDEX = os.getenv("AUTO_REINDEX", "true").lower() in ("1", "true", "yes", "y")
 
 # ==========================================================
 # FLASK
@@ -52,7 +59,30 @@ chat_history: List[Dict[str, Any]] = []
 _index_lock = threading.Lock()
 
 # ==========================================================
-# TEXT + PDF
+# LANGUAGE + EXERCISE DETECTION
+# ==========================================================
+def wants_bilingual(question: str) -> bool:
+    q = question.lower()
+    return any(x in q for x in [
+        "français et anglais", "francais et anglais",
+        "french and english", "fr+en", "fr/en"
+    ])
+
+def detect_lang(question: str) -> str:
+    q = question.lower()
+    en = ["what", "how", "explain", "write", "algorithm", "stack", "queue", "file system"]
+    fr = ["explique", "donne", "algorithme", "pile", "file", "système"]
+    return "en" if sum(w in q for w in en) > sum(w in q for w in fr) else "fr"
+
+def is_exercise(question: str) -> bool:
+    q = question.lower()
+    return any(w in q for w in [
+        "exercice", "td", "tp", "corrig", "solution",
+        "écrire", "ecrire", "pseudocode", "algorithm"
+    ])
+
+# ==========================================================
+# TEXT + PDF HANDLING
 # ==========================================================
 def normalize_text(t: str) -> str:
     t = t.replace("\x00", " ")
@@ -66,101 +96,112 @@ class Chunk:
     file: str
     page: int
 
-def load_pdfs(pdf_dir: str) -> List[Chunk]:
-    chunks = []
-    for fname in os.listdir(pdf_dir):
-        if not fname.lower().endswith(".pdf"):
-            continue
+def chunk_text(text: str) -> List[str]:
+    text = normalize_text(text)
+    if not text:
+        return []
+    chunks, i = [], 0
+    while i < len(text):
+        j = min(len(text), i + CHUNK_SIZE)
+        chunks.append(text[i:j])
+        if j == len(text):
+            break
+        i = max(0, j - CHUNK_OVERLAP)
+    return chunks
+
+def load_pdfs_from_dir(pdf_dir: str) -> List[Chunk]:
+    chunks: List[Chunk] = []
+    pdfs = [f for f in os.listdir(pdf_dir) if f.lower().endswith(".pdf")]
+    logging.info(f"📚 Found {len(pdfs)} PDFs in {pdf_dir}")
+
+    for fname in pdfs:
         reader = PdfReader(os.path.join(pdf_dir, fname))
         for i, page in enumerate(reader.pages, start=1):
             text = normalize_text(page.extract_text() or "")
-            if text:
-                chunks.append(Chunk(text, fname, i))
-    logging.info(f"Loaded {len(chunks)} chunks")
+            for c in chunk_text(text):
+                chunks.append(Chunk(c, fname, i))
+
+    logging.info(f"✅ Loaded {len(chunks)} chunks")
     return chunks
 
 # ==========================================================
-# VECTOR STORE (TF-IDF + FAISS)
+# VECTOR STORE (FAISS)
 # ==========================================================
 INDEX_PATH = os.path.join(INDEX_DIR, "faiss.index")
 META_PATH = os.path.join(INDEX_DIR, "meta.json")
-VECT_PATH = os.path.join(INDEX_DIR, "vectorizer.json")
 
-_vectorizer = None
+_embedder = None
 _index = None
 _meta = []
 
+def embedder():
+    global _embedder
+    if _embedder is None:
+        logging.info(f"🔧 Loading embedding model: {EMBED_MODEL_NAME}")
+        _embedder = SentenceTransformer(EMBED_MODEL_NAME)
+    return _embedder
+
+def embed(texts: List[str]) -> np.ndarray:
+    return np.array(embedder().encode(texts, normalize_embeddings=True), dtype=np.float32)
+
 def build_index():
-    global _vectorizer, _index, _meta
-
-    chunks = load_pdfs(DATA_DIR)
-    texts = [c.text for c in chunks]
-
-    _vectorizer = TfidfVectorizer(
-        max_features=MAX_FEATURES,
-        stop_words=None
-    )
-
-    X = _vectorizer.fit_transform(texts).astype(np.float32)
-    X = X.toarray()
-
-    dim = X.shape[1]
-    _index = faiss.IndexFlatIP(dim)
-    faiss.normalize_L2(X)
-    _index.add(X)
-
-    _meta = [
-        {"file": c.file, "page": c.page, "text": c.text}
-        for c in chunks
-    ]
-
-    faiss.write_index(_index, INDEX_PATH)
-    with open(META_PATH, "w", encoding="utf-8") as f:
-        json.dump(_meta, f, ensure_ascii=False)
-
-    with open(VECT_PATH, "w", encoding="utf-8") as f:
-        json.dump(_vectorizer.vocabulary_, f)
-
-def ensure_index():
-    global _vectorizer, _index, _meta
-
-    if _index is not None:
+    global _index, _meta
+    chunks = load_pdfs_from_dir(DATA_DIR)
+    if not chunks:
+        dim = embed(["test"]).shape[1]
+        _index = faiss.IndexFlatIP(dim)
+        _meta = []
         return
 
-    if os.path.exists(INDEX_PATH) and os.path.exists(META_PATH) and os.path.exists(VECT_PATH):
+    vecs = embed([f"passage: {c.text}" for c in chunks])
+    _index = faiss.IndexFlatIP(vecs.shape[1])
+    _index.add(vecs)
+    _meta = [{"file": c.file, "page": c.page, "text": c.text} for c in chunks]
+
+    faiss.write_index(_index, INDEX_PATH)
+
+    # ✅ تصحيح مشكلة int64
+    with open(META_PATH, "w", encoding="utf-8") as f:
+        json.dump([
+            {**m, "page": int(m["page"])} for m in _meta
+        ], f, ensure_ascii=False)
+
+def ensure_index():
+    global _index, _meta
+    if _index is not None:
+        return
+    if os.path.exists(INDEX_PATH) and os.path.exists(META_PATH):
         _index = faiss.read_index(INDEX_PATH)
         with open(META_PATH, "r", encoding="utf-8") as f:
             _meta = json.load(f)
-
-        with open(VECT_PATH, "r", encoding="utf-8") as f:
-            vocab = json.load(f)
-
-        _vectorizer = TfidfVectorizer(vocabulary=vocab)
     else:
         build_index()
 
-def retrieve(question: str):
+def retrieve(question: str) -> Tuple[List[Dict], float]:
     ensure_index()
-    qv = _vectorizer.transform([question]).toarray().astype(np.float32)
-    faiss.normalize_L2(qv)
-
+    if not _meta:
+        return [], 0.0
+    qv = embed([f"query: {question}"])
     scores, ids = _index.search(qv, TOP_K)
-    results = []
-
+    results, best = [], float(scores[0][0])
     for s, i in zip(scores[0], ids[0]):
         if i >= 0:
-            m = _meta[i]
+            m = _meta[int(i)]
             results.append({
                 "score": float(s),
                 "file": m["file"],
                 "page": m["page"],
                 "snippet": m["text"][:400]
             })
-    return results
+    return results, best
 
 # ==========================================================
-# GROQ
+# LLM CALL (GROQ)
 # ==========================================================
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+
 def groq(system, user):
     r = requests.post(
         f"{GROQ_BASE_URL}/chat/completions",
@@ -181,18 +222,53 @@ def groq(system, user):
     return r.json()["choices"][0]["message"]["content"]
 
 # ==========================================================
+# PROMPTS
+# ==========================================================
+SYSTEM_GROUNDED = """
+You are an academic SFSD tutor.
+Answer in the SAME language as the question (French or English).
+Use SFSD PSEUDOCODE ONLY.
+
+Use:
+DEBUT / FIN
+SI / SINON / FSI
+TQ / FTQ
+← for assignment
+// comments
+
+If EXERCISE_MODE=yes:
+- Give idea
+- Steps
+- PSEUDOCODE
+- Complexity
+
+Put code inside ```pseudo```.
+
+Add Sources at the end.
+"""
+
+SYSTEM_GENERAL = """
+⚠️ General answer (not based on PDFs).
+Same rules as above.
+"""
+
+# ==========================================================
 # ROUTES
 # ==========================================================
 @app.route("/health")
 def health():
     ensure_index()
-    return jsonify({"status": "ok", "chunks": len(_meta)})
+    return jsonify({
+        "status": "healthy",
+        "chunks_indexed": len(_meta),
+        "errors": []
+    })
 
 @app.route("/reindex", methods=["POST"])
 def reindex():
     with _index_lock:
         build_index()
-    return jsonify({"ok": True, "chunks": len(_meta)})
+    return jsonify({"ok": True, "chunks_indexed": len(_meta)})
 
 @app.route("/ask", methods=["POST"])
 def ask():
@@ -201,15 +277,28 @@ def ask():
     if not question:
         return jsonify({"error": "question required"}), 400
 
-    sources = retrieve(question)
-    ctx = "\n".join([f"{s['file']} p.{s['page']}: {s['snippet']}" for s in sources])
+    lang = detect_lang(question)
+    bilingual = wants_bilingual(question)
+    exercise = is_exercise(question)
 
-    system = "You are an academic SFSD tutor. Use PSEUDOCODE."
-    answer = groq(system, question + "\n\n" + ctx)
+    sources, best = retrieve(question)
+    grounded = best >= SIM_THRESHOLD and len(sources) > 0
+
+    meta = f"LANG={lang}\nBILINGUAL={bilingual}\nEXERCISE_MODE={'yes' if exercise else 'no'}\n"
+
+    if grounded:
+        ctx = "\n".join([f"{s['file']} p.{s['page']}: {s['snippet']}" for s in sources])
+        answer = groq(SYSTEM_GROUNDED, meta + question + "\n\n" + ctx)
+    else:
+        answer = groq(SYSTEM_GENERAL, meta + question)
+
+    chat_history.append({"q": question, "a": answer})
 
     return jsonify({
         "answer": answer,
-        "sources": sources
+        "grounded": grounded,
+        "sources": sources,
+        "history_count": len(chat_history)
     })
 
 # ==========================================================
@@ -217,4 +306,4 @@ def ask():
 # ==========================================================
 if __name__ == "__main__":
     ensure_index()
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="127.0.0.1", port=5000, debug=True)
