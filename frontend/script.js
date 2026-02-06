@@ -17,7 +17,7 @@ const answerContent = document.getElementById('answerContent');
 // ============================================
 // إذا راح تنشر أونلاين، بدّل SERVER_BASE لـ رابط السيرفر تاعك
 const CONFIG = {
-  SERVER_BASE: 'http://127.0.0.1:5000',
+  SERVER_BASE: 'https://sfsd-ai.onrender.com',
   TIMEOUT: 60000
 };
 
