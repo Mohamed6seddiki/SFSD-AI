@@ -6,12 +6,12 @@ requests==2.32.3
 
 # PDF
 pypdf==5.1.0
-numpy==1.26.4
+numpy==2.2.1
 
-# Vector Search
-faiss-cpu==1.8.0.post1
+# Vector Search - تحديث النسخة
+faiss-cpu==1.13.2
 
-# Lightweight Embeddings (no torch needed)
+# Lightweight Embeddings
 scikit-learn==1.5.2
 joblib==1.4.2
 
