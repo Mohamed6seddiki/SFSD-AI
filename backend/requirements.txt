@@ -4,16 +4,16 @@ flask-cors==5.0.0
 python-dotenv==1.0.1
 requests==2.32.3
 
-# PDF
-pypdf==5.1.0
+# Text processing & math
 numpy==2.2.1
-
-# Vector Search - تحديث النسخة
-faiss-cpu==1.13.2
-
-# Lightweight Embeddings
 scikit-learn==1.5.2
 joblib==1.4.2
+
+# Vector search
+faiss-cpu==1.13.2
+
+# PDF handling
+pypdf==5.1.0
 
 # Server
 gunicorn==23.0.0
